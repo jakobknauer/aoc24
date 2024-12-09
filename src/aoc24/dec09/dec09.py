@@ -1,31 +1,41 @@
 import sys
 
 
+BlockSpec = tuple[int, int]  # start_index, size
+FreeBlock = BlockSpec
+FileId = int
+FilledBlock = tuple[BlockSpec, FileId]
+
+
 def main() -> None:
     with open(sys.argv[1], "r") as fp:
         diskmap = list(map(int, fp.readline().strip()))
 
-    disk = decompress(diskmap)
+    free_blocks, filled_blocks = decompress(diskmap)
     # compact(disk)
-    compact2(disk)
-    checksum = compute_checksum2(disk)
+    compacted_disk = compact2(free_blocks, filled_blocks)
+    checksum = compute_checksum2(compacted_disk)
     print(checksum)
 
 
-def decompress(diskmap: list[int]) -> list[tuple[int, int | None]]:
-    result: list[tuple[int, int | None]] = []
-    empty: bool = False
+def decompress(diskmap: list[int]) -> tuple[list[FreeBlock], list[FilledBlock]]:
+    free_blocks: list[FreeBlock] = []
+    filled_blocks: list[FilledBlock] = []
+
+    free_block: bool = False
     fileno: int = 0
+    current_pos = 0
 
-    for n in diskmap:
-        if empty:
-            result.append((n, None))
+    for block_size in diskmap:
+        if free_block:
+            free_blocks.append((current_pos, block_size))
         else:
-            result.append((n, fileno))
+            filled_blocks.append(((current_pos, block_size), fileno))
             fileno += 1
-        empty = not empty
+        free_block = not free_block
+        current_pos += block_size
 
-    return result
+    return free_blocks, filled_blocks
 
 
 # def compact(disk: list[int, int | None]) -> None:
@@ -47,47 +57,41 @@ def decompress(diskmap: list[int]) -> list[tuple[int, int | None]]:
 #             filled_slot -= 1
 
 
-def compact2(disk: list[tuple[int, int | None]]) -> None:
-    highest_id = max(id_ for (_, id_) in disk if id_ is not None)
+def compact2(free_blocks: list[FreeBlock], filled_blocks: list[FilledBlock]) -> list[FilledBlock]:
+    compacted_disk: list[FilledBlock] = []
 
-    for file_id in range(highest_id, -1, -1):
-        file_index, file_size = next((index, size) for (index, (size, id_)) in enumerate(disk) if id_ == file_id)
-
-        free_index = 0
-        while free_index < file_index:
-
-            (size, id_) = disk[free_index]
-            if id_ is None and size >= file_size:
+    for (file_pos, file_size), file_id in reversed(filled_blocks):
+        found_free_block = False
+        for free_block_index, (free_pos, free_size) in enumerate(free_blocks):
+            if free_pos >= file_pos:
+                break
+            if free_size >= file_size:
+                found_free_block = True
                 break
 
-            free_index += 1
-
-        if free_index == file_index:
-            continue
-
-        free_size, _ = disk[free_index]
-
-        if free_size == file_size:
-            disk[free_index] = (free_size, file_id)
-            disk[file_index] = (file_size, None)
+        if not found_free_block:
+            compacted_disk.append(((file_pos, file_size), file_id))
+        elif free_size == file_size:
+            compacted_disk.append(((free_pos, file_size), file_id))
+            del free_blocks[free_block_index]
         else:
-            disk[file_index] = (file_size, None)
-            disk[free_index] = (file_size, file_id)
-            disk.insert(free_index + 1, (free_size - file_size, None))
+            compacted_disk.append(((free_pos, file_size), file_id))
+            del free_blocks[free_block_index]
+            free_blocks.insert(free_block_index, (free_pos + file_size, free_size - file_size))
+
+    return compacted_disk
 
 
 # def compute_checksum(disk: list[int | None]) -> int:
 #     return sum(i * n for (i, n) in enumerate(disk) if n is not None)
 
 
-def compute_checksum2(disk: list[tuple[int, int | None]]) -> int:
+def compute_checksum2(disk: list[FilledBlock]) -> int:
     checksum = 0
-    current_pos = 0
-    for size, id_ in disk:
-        if id_ is not None:
-            for i in range(current_pos, current_pos + size):
-                checksum += id_ * i
-        current_pos += size
+
+    for (pos, size), file_id in disk:
+        for i in range(pos, pos + size):
+            checksum += i * file_id
 
     return checksum
 
